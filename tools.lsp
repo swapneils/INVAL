@@ -7,30 +7,37 @@
 (defvar *path-to-FD-dump.py* "dump.py")
 
 (defun call-fd-dump (domain-path problem-path)
-  (multiple-value-bind
-      (stream code process)
-      (si:run-program *path-to-python*
-		      (list *path-to-FD-dump.py*
-			    domain-path
-			    problem-path
-			    "fddump")
-		      :wait t :input nil :output t)
+  (multiple-value-bind (stream code process)
+      #+ecl (si:run-program
+             *path-to-python*
+             (list *path-to-FD-dump.py*
+                   domain-path
+                   problem-path
+                   "fddump")
+             :wait t :input nil :output t)
+    #-ecl (uiop:run-program
+           (cons *path-to-python*
+                 (list *path-to-FD-dump.py*
+                       domain-path
+                       problem-path
+                       "fddump"))
+           :output t)
     (when (not (eq code 0)) (error "~a running dump.py" code))
     (let ((content (read-file "fddump"))
-	  (atoms nil)
-	  (ground-action-names nil)
-	  (ground-axioms nil)
-	  (mutex-groups nil))
+          (atoms nil)
+          (ground-action-names nil)
+          (ground-axioms nil)
+          (mutex-groups nil))
       (dolist (item content)
-	(cond ((eq (car item) 'atoms)
-	       (setq atoms (cdr item)))
-	      ((eq (car item) 'actions)
-	       (setq ground-action-names (cdr item)))
-	      ((eq (car item) 'axioms)
-	       (setq ground-axioms (cdr item)))
-	      ((eq (car item) 'mutex-groups)
-	       (setq mutex-groups (cdr item)))
-	      ))
+        (cond ((eq (car item) 'atoms)
+               (setq atoms (cdr item)))
+              ((eq (car item) 'actions)
+               (setq ground-action-names (cdr item)))
+              ((eq (car item) 'axioms)
+               (setq ground-axioms (cdr item)))
+              ((eq (car item) 'mutex-groups)
+               (setq mutex-groups (cdr item)))
+              ))
       (list atoms ground-action-names ground-axioms mutex-groups))))
 
 (defun make-mutex-map (atoms mutex-groups)

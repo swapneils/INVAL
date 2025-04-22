@@ -160,11 +160,19 @@
 ;; check any of the inputs.
 
 (defun run-val (domain-file problem-file plan-file &key (program "validate"))
-  (let ((stream (ext:run-program
+  (let ((stream
+          #+ecl (ext:run-program
 		 program (list "-S" (path-as-string domain-file)
 			       (path-as-string problem-file)
 			       (path-as-string plan-file))
-		 :input NIL :output :stream :error :output)))
+		 :input NIL :output :stream :error :output)
+          #-ecl (uiop:run-program
+                 (list program "-S" (path-as-string domain-file)
+                       (path-as-string problem-file)
+                       (path-as-string plan-file))
+                 ;; Return the input stream reading from the process
+                 :output #'identity
+                 :error :output)))
     (if (null stream)
 	(error "failed to run VAL executable (~s)" program))
     (let ((res (let ((*readtable* *pddl-readtable*))

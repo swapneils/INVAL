@@ -1,0 +1,144 @@
+;; #!/usr/local/bin/ecl -shell
+
+;; A simple make system
+;;
+;; To use it, run `(load "compile-inval")' with a Lisp image
+;; in the INVAL directory.
+;; Alternatively, you can uncomment the #! line above, configure
+;; it for your own lisp's equivalent of ECL's `-shell' argument,
+;; and then call this file as you would an executable.
+;;
+;; Currently supports ECL and SBCL. To add support for more
+;; implementations, modify the non-ECL version of `make'
+;; to implement its API on your own implementation.
+;; A large portion of the SBCL code can likely be reused
+;; for your implementation due to using `uiop'.
+
+#+ecl
+(require 'cmp)
+#-ecl
+(require :asdf)
+#-ecl
+(in-package :cl-user)
+
+#+ecl
+(defun make-compile-file (source-file-list object-file)
+  (compile-file (first source-file-list) :system-p t))
+
+#+ecl
+(defun make-link-executable (object-file-list exec-file)
+  (c:build-program exec-file :lisp-files object-file-list))
+
+#+ecl
+(defun make-static-library (object-file-list lib-file)
+  (c:build-static-library lib-file
+			  :lisp-files object-file-list
+			  :init-name "init_library"))
+
+#+ecl
+(defvar *dependencies*
+  (list
+   (list "inval" '("inval.o" "vis.o" "inval-main.o")
+         #'make-link-executable)
+   (list "inval.a" '("inval.o" "vis.o" "inval-main.o")
+         #'make-static-library)
+
+   (list "rsk" '("inval.o" "rsk.o" "rsk-main.o") #'make-link-executable)
+   (list "simplify" '("inval.o" "rsk.o" "simplify.o" "simplify-main.o") #'make-link-executable)
+   (list "translate" '("inval.o" "translate-main.o") #'make-link-executable)
+   (list "nyat" '("inval.o" "rsk.o" "tools.o" "simplify.o" "fdr3.o" "nyat-main.o")
+         #'make-link-executable)
+   (list "vapo" '("inval.o" "vapo.o" "simplify.o" "vis.o" "aux.o" "vapo-main.o")
+         #'make-link-executable)
+   (list "run-val-test-ipc4"
+         '("inval.o" "val-test-util.o" "run-val-test-ipc4.o")
+         #'make-link-executable)
+   (list "inval.o" '("inval.lsp") #'make-compile-file)
+   (list "vapo.o" '("vapo.lsp") #'make-compile-file)
+   (list "vis.o" '("vis.lsp") #'make-compile-file)
+   (list "aux.o" '("aux.lsp") #'make-compile-file)
+   (list "rsk.o" '("rsk.lsp") #'make-compile-file)
+   (list "tools.o" '("tools.lsp") #'make-compile-file)
+   (list "simplify.o" '("simplify.lsp") #'make-compile-file)
+   (list "fdr3.o" '("fdr3.lsp") #'make-compile-file)
+   (list "inval-main.o" '("inval-main.lsp") #'make-compile-file)
+   (list "translate-main.o" '("translate-main.lsp") #'make-compile-file)
+   (list "rsk-main.o" '("rsk-main.lsp") #'make-compile-file)
+   (list "simplify-main.o" '("simplify-main.lsp") #'make-compile-file)
+   (list "nyat-main.o" '("nyat-main.lsp") #'make-compile-file)
+   (list "vapo-main.o" '("vapo-main.lsp") #'make-compile-file)
+   (list "val-test-util.o" '("val-test-util.lsp")
+         #'make-compile-file)
+   (list "run-val-test-ipc4.o" '("run-val-test-ipc4.lsp")
+         #'make-compile-file)
+   ))
+
+(defun run-command-async (cmd)
+  #+ecl (ext:system cmd)
+  #-ecl (uiop:launch-program cmd))
+
+#+ecl
+(defun file-newer-than (file1 file2)
+  (= (run-command-async (concatenate 'string "test " file1 " -nt " file2)) 0))
+
+#+ecl
+(defun file-exists (file)
+  (= (run-command-async (concatenate 'string "test -f " file)) 0))
+
+#+ecl
+(defun need-to-make (target deps)
+  (or (not (file-exists target))
+      (some #'(lambda (pred-file) (file-newer-than pred-file target)) deps)))
+
+#+ecl
+(defun make (target)
+  (let ((rule (assoc target *dependencies* :test #'equal)))
+    (cond (rule
+	   (dolist (pred (second rule))
+	     (when (assoc pred *dependencies* :test #'equal)
+		 (make pred)))
+	   (cond ((need-to-make (first rule) (second rule))
+		  (format t "~&making ~a...~%" (first rule))
+		  (let ((retval
+			 (funcall (third rule) (second rule) (first rule))))
+		    (cond ((not retval)
+			   (format t "~&exiting because of errors...~%")
+			   (quit))
+			  (t retval))))
+		 (t (format t "~&~a is up to date~%" target))))
+	  (t (format t "~&no rule to make ~a~%" target))
+	  )))
+
+#-ecl
+(defun make (target)
+  "Build an executable for the target component of INVAL.
+Assumes INVAL is installed somewhere ASDF knows to look for systems.
+TARGET is a string specifying the name of the sub-system of INVAL
+being built"
+  #+sbcl
+  (let* ((system-name (intern (nstring-upcase (concatenate 'string "inval/" target)) :keyword))
+         (entrypoint-name (intern (nstring-upcase (format nil "run-~A" target))))
+         (lisp-load-asdf-system-spec `(asdf:load-system ,system-name))
+         (lisp-make-spec `(uiop:dump-image ,target :executable t))
+         (lisp-command "sbcl --no-userinit")
+         (setup-asdf-registry-command "(pushnew #p\"~/quicklisp/local-projects/INVAL/\" asdf:*central-registry* :test #'equal)")
+         (load-asdf-system-command (let* ((*package* (find-package :cl-user))) (format nil "~S" lisp-load-asdf-system-spec)))
+         (lisp-entrypoint-command (format nil "(SETF UIOP:*IMAGE-ENTRY-POINT* '~S)" entrypoint-name))
+         (lisp-make-command (let* ((*package* (find-package :cl-user))) (format nil "~S" lisp-make-spec)))
+         (_ (print (list lisp-command setup-asdf-registry-command load-asdf-system-command lisp-entrypoint-command lisp-make-command)))
+         (_ (print ""))
+         (make-cmd (format nil "~A --eval \"(in-package :cl-user)\" --eval \"(require :asdf)\" --eval ~S --eval ~S --eval ~S --eval ~S"
+                           lisp-command setup-asdf-registry-command load-asdf-system-command lisp-entrypoint-command lisp-make-command)))
+    (uiop:run-program make-cmd)))
+
+
+(make "inval")
+(make "rsk")
+(make "simplify")
+;; (make "translate")
+(make "nyat")
+(make "vapo")
+
+(make "run-val-test-ipc4")
+
+(terpri)
